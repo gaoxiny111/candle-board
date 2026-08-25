@@ -1,0 +1,38 @@
+@import "tailwindcss";
+
+:root {
+  --bg: #090b10;
+  --panel: #11141c;
+  --panel-2: #161b26;
+  --line: #242a36;
+  --gold: #c9a227;
+  --up: #3dd68c;
+  --down: #f0616d;
+  --text: #d7dde8;
+  --muted: #8b93a7;
+}
+
+html,
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+button {
+  cursor: pointer;
+}
+
+.scrollbar-thin::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+.scrollbar-thin::-webkit-scrollbar-thumb {
+  background: #2a3140;
+  border-radius: 8px;
+}
