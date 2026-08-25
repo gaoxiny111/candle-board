@@ -18,9 +18,10 @@ export default function KlineChart() {
   const chartRef = useRef<IChartApi | null>(null);
   const candleRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
   const volRef = useRef<ISeriesApi<"Histogram"> | null>(null);
+  const ma5Ref = useRef<ISeriesApi<"Line"> | null>(null);
+  const ma10Ref = useRef<ISeriesApi<"Line"> | null>(null);
   const ma20Ref = useRef<ISeriesApi<"Line"> | null>(null);
-  const ma50Ref = useRef<ISeriesApi<"Line"> | null>(null);
-  const ma200Ref = useRef<ISeriesApi<"Line"> | null>(null);
+  const ma60Ref = useRef<ISeriesApi<"Line"> | null>(null);
   const priceLines = useRef<{ id: string; line: ReturnType<ISeriesApi<"Candlestick">["createPriceLine"]> }[]>([]);
 
   const candles = useBoardStore((s) => s.candles);
@@ -32,6 +33,8 @@ export default function KlineChart() {
   const selectedId = useBoardStore((s) => s.selectedId);
   const drawMode = useBoardStore((s) => s.drawMode);
   const atr = useBoardStore((s) => s.atr);
+  const limitUp = useBoardStore((s) => s.limitUp);
+  const limitDown = useBoardStore((s) => s.limitDown);
   const addLine = useBoardStore((s) => s.addLine);
   const addTrendPoint = useBoardStore((s) => s.addTrendPoint);
 
@@ -52,25 +55,22 @@ export default function KlineChart() {
       autoSize: true,
     });
     const candle = chart.addCandlestickSeries({
-      upColor: "#3dd68c",
-      downColor: "#f0616d",
+      upColor: "#f0616d",
+      downColor: "#3dd68c",
       borderVisible: false,
-      wickUpColor: "#3dd68c",
-      wickDownColor: "#f0616d",
+      wickUpColor: "#f0616d",
+      wickDownColor: "#3dd68c",
     });
     const vol = chart.addHistogramSeries({
       priceFormat: { type: "volume" },
       priceScaleId: "vol",
     });
-    chart.priceScale("vol").applyOptions({
-      scaleMargins: { top: 0.82, bottom: 0 },
-    });
-    candle.priceScale().applyOptions({
-      scaleMargins: { top: 0.08, bottom: 0.22 },
-    });
-    ma20Ref.current = chart.addLineSeries({ color: "#c9a227", lineWidth: 1, priceLineVisible: false });
-    ma50Ref.current = chart.addLineSeries({ color: "#5b8def", lineWidth: 1, priceLineVisible: false });
-    ma200Ref.current = chart.addLineSeries({ color: "#c084fc", lineWidth: 1, priceLineVisible: false });
+    chart.priceScale("vol").applyOptions({ scaleMargins: { top: 0.82, bottom: 0 } });
+    candle.priceScale().applyOptions({ scaleMargins: { top: 0.08, bottom: 0.22 } });
+    ma5Ref.current = chart.addLineSeries({ color: "#e8e8e8", lineWidth: 1, priceLineVisible: false });
+    ma10Ref.current = chart.addLineSeries({ color: "#c9a227", lineWidth: 1, priceLineVisible: false });
+    ma20Ref.current = chart.addLineSeries({ color: "#c084fc", lineWidth: 1, priceLineVisible: false });
+    ma60Ref.current = chart.addLineSeries({ color: "#3dd68c", lineWidth: 1, priceLineVisible: false });
     chartRef.current = chart;
     candleRef.current = candle;
     volRef.current = vol;
@@ -107,54 +107,68 @@ export default function KlineChart() {
 
   useEffect(() => {
     if (!candleRef.current || !volRef.current || !candles.length) return;
-    candleRef.current.setData(
-      candles.map((c) => ({
-        time: c.time as UTCTimestamp,
-        open: c.open,
-        high: c.high,
-        low: c.low,
-        close: c.close,
-      })),
-    );
-    volRef.current.setData(
-      candles.map((c) => ({
-        time: c.time as UTCTimestamp,
-        value: c.volume,
-        color: c.close >= c.open ? "rgba(61,214,140,0.35)" : "rgba(240,97,109,0.35)",
-      })),
-    );
-    const applyMa = (
-      series: ISeriesApi<"Line"> | null,
-      values: (number | null)[] | undefined,
-      on: boolean,
-    ) => {
-      if (!series) return;
-      if (!on || !values) {
-        series.setData([]);
-        return;
-      }
-      series.setData(
-        candles
-          .map((c, i) => (values[i] != null ? { time: c.time as UTCTimestamp, value: values[i]! } : null))
-          .filter(Boolean) as { time: UTCTimestamp; value: number }[],
+    const ordered = [...candles].sort((a, b) => a.time - b.time);
+    try {
+      candleRef.current.setData(
+        ordered.map((c) => ({
+          time: c.time as UTCTimestamp,
+          open: c.open,
+          high: c.high,
+          low: c.low,
+          close: c.close,
+        })),
       );
-    };
-    applyMa(ma20Ref.current, indicators?.ma20, showMa.ma20);
-    applyMa(ma50Ref.current, indicators?.ma50, showMa.ma50);
-    applyMa(ma200Ref.current, indicators?.ma200, showMa.ma200);
+      volRef.current.setData(
+        ordered.map((c) => ({
+          time: c.time as UTCTimestamp,
+          value: c.volume,
+          color: c.close >= c.open ? "rgba(240,97,109,0.35)" : "rgba(61,214,140,0.35)",
+        })),
+      );
+      const applyMa = (
+        series: ISeriesApi<"Line"> | null,
+        values: (number | null)[] | undefined,
+        on: boolean,
+      ) => {
+        if (!series) return;
+        if (!on || !values) {
+          series.setData([]);
+          return;
+        }
+        series.setData(
+          ordered
+            .map((c, i) => (values[i] != null ? { time: c.time as UTCTimestamp, value: values[i]! } : null))
+            .filter(Boolean) as { time: UTCTimestamp; value: number }[],
+        );
+      };
+      applyMa(ma5Ref.current, indicators?.ma5, showMa.ma5);
+      applyMa(ma10Ref.current, indicators?.ma10, showMa.ma10);
+      applyMa(ma20Ref.current, indicators?.ma20, showMa.ma20);
+      applyMa(ma60Ref.current, indicators?.ma60, showMa.ma60);
 
-    const gradeColor = { S: "#ff4d4f", A: "#ff9800", B: "#e6c35c" };
-    candleRef.current.setMarkers(
-      signals.slice(0, 40).map((s) => ({
-        time: s.time as UTCTimestamp,
-        position: s.direction === "bull" ? "belowBar" : "aboveBar",
-        color: gradeColor[s.grade],
-        shape: s.direction === "bull" ? "arrowUp" : "arrowDown",
-        text: `${s.grade} ${s.label}`,
-      })),
-    );
-    chartRef.current?.timeScale().fitContent();
-  }, [candles, indicators, showMa, signals]);
+      const gradeColor = { S: "#ff4d4f", A: "#ff9800", B: "#e6c35c" };
+      const markerByTime = new Map<number, (typeof signals)[number]>();
+      const preferred = [...signals]
+        .filter((s) => s.id === selectedId || s.grade !== "B")
+        .sort((a, b) => a.time - b.time || b.quality - a.quality);
+      for (const s of preferred) markerByTime.set(s.time, s);
+      candleRef.current.setMarkers(
+        [...markerByTime.values()]
+          .sort((a, b) => a.time - b.time)
+          .slice(-12)
+          .map((s) => ({
+            time: s.time as UTCTimestamp,
+            position: s.direction === "bull" ? ("belowBar" as const) : ("aboveBar" as const),
+            color: gradeColor[s.grade],
+            shape: s.direction === "bull" ? ("arrowUp" as const) : ("arrowDown" as const),
+            text: `${s.grade} ${s.label}`,
+          })),
+      );
+      chartRef.current?.timeScale().fitContent();
+    } catch (err) {
+      console.error("chart data", err);
+    }
+  }, [candles, indicators, showMa, signals, selectedId]);
 
   useEffect(() => {
     if (!candleRef.current) return;
@@ -167,24 +181,42 @@ export default function KlineChart() {
         lineWidth: 1,
         lineStyle: LineStyle.Solid,
         axisLabelVisible: true,
-        title: `${line.kind === "support" ? "S" : "R"}×${line.tests}${line.springAnchor ? " Spring" : ""}${
-          line.upthrustAnchor ? " UT" : ""
-        }`,
+        title: `${line.kind === "support" ? "S" : "R"}×${line.tests}`,
       });
       priceLines.current.push({ id: line.id, line: pl });
     }
+    if (limitUp != null) {
+      const pl = candleRef.current.createPriceLine({
+        price: limitUp,
+        color: "#f0616d",
+        lineWidth: 1,
+        lineStyle: LineStyle.Dashed,
+        axisLabelVisible: true,
+        title: "涨停",
+      });
+      priceLines.current.push({ id: "limit-up", line: pl });
+    }
+    if (limitDown != null) {
+      const pl = candleRef.current.createPriceLine({
+        price: limitDown,
+        color: "#3dd68c",
+        lineWidth: 1,
+        lineStyle: LineStyle.Dashed,
+        axisLabelVisible: true,
+        title: "跌停",
+      });
+      priceLines.current.push({ id: "limit-down", line: pl });
+    }
     if (fib) {
       const span = fib.swingHigh - fib.swingLow;
-      const levels = [
+      for (const [lv, color] of [
         [0.382, "#5b8def"],
         [0.5, "#c9a227"],
         [0.618, "#c084fc"],
         [0.786, "#8b93a7"],
-      ] as const;
-      for (const [lv, color] of levels) {
-        const price = fib.swingHigh - span * lv;
+      ] as const) {
         const pl = candleRef.current.createPriceLine({
-          price,
+          price: fib.swingHigh - span * lv,
           color,
           lineWidth: 1,
           lineStyle: LineStyle.Dashed,
@@ -194,7 +226,7 @@ export default function KlineChart() {
         priceLines.current.push({ id: `fib-${lv}`, line: pl });
       }
     }
-  }, [lines, fib]);
+  }, [lines, fib, limitUp, limitDown]);
 
   const active = useBoardStore(selectActive);
 
@@ -211,6 +243,7 @@ export default function KlineChart() {
       {selectedId && active && (
         <div className="pointer-events-none absolute right-16 top-3 rounded bg-black/50 px-2 py-1 text-[11px] text-[#8b93a7]">
           已选 {active.grade} {active.label}
+          {active.direction === "bear" ? " · 减仓参考" : ""}
         </div>
       )}
       <span className="sr-only">{atr}</span>

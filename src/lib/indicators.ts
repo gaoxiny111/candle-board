@@ -1,4 +1,5 @@
 import type { Candle, HtfTrend, IndicatorSnapshot } from "./types";
+import { maAlignment } from "./ashare";
 
 export function sma(values: number[], period: number): (number | null)[] {
   const out: (number | null)[] = [];
@@ -84,7 +85,6 @@ export function macd(closes: number[], fast = 12, slow = 26, signal = 9) {
     if (fastEma[i] == null || slowEma[i] == null) return null;
     return (fastEma[i] as number) - (slowEma[i] as number);
   });
-  const macdVals = macdLine.map((v) => v ?? 0);
   const firstValid = macdLine.findIndex((v) => v != null);
   const signalLine: (number | null)[] = macdLine.map(() => null);
   if (firstValid >= 0) {
@@ -95,35 +95,44 @@ export function macd(closes: number[], fast = 12, slow = 26, signal = 9) {
   const hist = macdLine.map((v, i) =>
     v == null || signalLine[i] == null ? null : v - (signalLine[i] as number),
   );
-  return { macdLine, signalLine, hist, macdVals };
+  return { macdLine, signalLine, hist };
 }
 
-export function stochastic(candles: Candle[], kPeriod = 14, kSmooth = 3, dPeriod = 3) {
-  const rawK: (number | null)[] = [];
+/** A股常用 KDJ(9,3,3) */
+export function kdj(candles: Candle[], n = 9, m1 = 3, m2 = 3) {
+  const k: (number | null)[] = [];
+  const d: (number | null)[] = [];
+  const j: (number | null)[] = [];
+  let prevK = 50;
+  let prevD = 50;
   for (let i = 0; i < candles.length; i++) {
-    if (i < kPeriod - 1) {
-      rawK.push(null);
+    if (i < n - 1) {
+      k.push(null);
+      d.push(null);
+      j.push(null);
       continue;
     }
     let hh = -Infinity;
     let ll = Infinity;
-    for (let j = i - kPeriod + 1; j <= i; j++) {
-      hh = Math.max(hh, candles[j].high);
-      ll = Math.min(ll, candles[j].low);
+    for (let t = i - n + 1; t <= i; t++) {
+      hh = Math.max(hh, candles[t].high);
+      ll = Math.min(ll, candles[t].low);
     }
-    const den = hh - ll || 1e-12;
-    rawK.push(((candles[i].close - ll) / den) * 100);
+    const rsv = hh === ll ? 50 : ((candles[i].close - ll) / (hh - ll)) * 100;
+    const curK = (rsv + (m1 - 1) * prevK) / m1;
+    const curD = (curK + (m2 - 1) * prevD) / m2;
+    const curJ = 3 * curK - 2 * curD;
+    k.push(curK);
+    d.push(curD);
+    j.push(curJ);
+    prevK = curK;
+    prevD = curD;
   }
-  const kFilled = rawK.map((v) => v ?? 0);
-  const kSma = sma(kFilled, kSmooth);
-  const k: (number | null)[] = rawK.map((v, i) => (v == null ? null : kSma[i]));
-  const kNum = k.map((v) => v ?? 0);
-  const dSma = sma(kNum, dPeriod);
-  const d: (number | null)[] = k.map((v, i) => (v == null ? null : dSma[i]));
-  return { k, d };
+  return { k, d, j };
 }
 
-export function lastNumber(values: (number | null)[]): number | null {
+export function lastNumber(values: (number | null)[] | undefined): number | null {
+  if (!values) return null;
   for (let i = values.length - 1; i >= 0; i--) {
     const v = values[i];
     if (v != null && Number.isFinite(v)) return v;
@@ -138,36 +147,36 @@ export function slope(values: (number | null)[], lookback = 5): number {
   return (curr - prev) / Math.abs(prev);
 }
 
-export function computeIndicators(candles: Candle[]): import("./types").IndicatorSnapshot {
+export function computeIndicators(candles: Candle[]): IndicatorSnapshot {
   const closes = candles.map((c) => c.close);
   const vols = candles.map((c) => c.volume);
   const m = macd(closes);
   return {
+    ma5: sma(closes, 5),
+    ma10: sma(closes, 10),
     ma20: sma(closes, 20),
-    ma50: sma(closes, 50),
-    ma200: sma(closes, 200),
+    ma60: sma(closes, 60),
     rsi: rsi(closes, 14),
     atr: atr(candles, 14),
-    stoch: stochastic(candles),
+    kdj: kdj(candles, 9, 3, 3),
     macd: { macd: m.macdLine, signal: m.signalLine, hist: m.hist },
+    volMa5: sma(vols, 5),
     volMa20: sma(vols, 20),
-    volMa50: sma(vols, 50),
   };
 }
 
-export function htfFromCandles(
-  candles: Candle[],
-  label: string,
-): import("./types").HtfTrend {
-  const ma = sma(
-    candles.map((c) => c.close),
-    20,
-  );
-  const s = slope(ma, 5);
+export function htfFromCandles(candles: Candle[], label: string): HtfTrend {
+  const closes = candles.map((c) => c.close);
+  const ma5 = lastNumber(sma(closes, 5));
+  const ma10 = lastNumber(sma(closes, 10));
+  const ma20 = lastNumber(sma(closes, 20));
+  const ma60 = lastNumber(sma(closes, 60));
+  const align = maAlignment(ma5, ma10, ma20, ma60);
+  const s = slope(sma(closes, 20), 5);
   return {
     label,
-    direction: s > 0.004 ? "up" : s < -0.004 ? "down" : "side",
+    direction: align === "side" ? (s > 0.004 ? "up" : s < -0.004 ? "down" : "side") : align,
     slope: s,
-    ma20: lastNumber(ma),
+    ma20,
   };
 }

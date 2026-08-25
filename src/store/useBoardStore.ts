@@ -8,18 +8,22 @@ import type {
   FilterResult,
   HtfTrend,
   IndicatorSnapshot,
+  MarketBoard,
   PatternSignal,
   StructureLine,
   Timeframe,
   TradePlan,
   TrendLine,
 } from "@/lib/types";
-import { SYMBOLS } from "@/lib/symbols";
+import { DEFAULT_SYMBOL_ID, getSymbol } from "@/lib/symbols";
 import { computeIndicators, lastNumber } from "@/lib/indicators";
 import { detectPatterns } from "@/lib/patterns/detect";
 import { runFilters } from "@/lib/filters";
 import { buildPlan, DEFAULT_RISK } from "@/lib/plan";
 import { lastSwingRange } from "@/lib/swings";
+import { limitPrices } from "@/lib/ashare";
+
+type MaKey = "ma5" | "ma10" | "ma20" | "ma60";
 
 type BoardState = {
   symbolId: string;
@@ -32,12 +36,16 @@ type BoardState = {
   indicators: IndicatorSnapshot | null;
   atr: number;
   htf: HtfTrend;
+  market: MarketBoard | null;
+  limitPct: number;
+  limitUp: number | null;
+  limitDown: number | null;
   signals: PatternSignal[];
   selectedId: string | null;
   lines: StructureLine[];
   trends: TrendLine[];
   fib: FibSet;
-  showMa: { ma20: boolean; ma50: boolean; ma200: boolean };
+  showMa: Record<MaKey, boolean>;
   drawMode: DrawMode;
   trendDraft: { t: number; p: number } | null;
   filters: FilterResult | null;
@@ -61,7 +69,7 @@ type BoardState = {
   autoFib: () => void;
   clearFib: () => void;
   setDrawMode: (m: DrawMode) => void;
-  setShowMa: (k: "ma20" | "ma50" | "ma200", on: boolean) => void;
+  setShowMa: (k: MaKey, on: boolean) => void;
   setAccount: (n: number) => void;
   setRiskPct: (n: number) => void;
   setForceRr: (v: boolean) => void;
@@ -75,13 +83,28 @@ const DEFAULT_HTF: HtfTrend = { direction: "side", label: "周线", ma20: null, 
 function recompute(get: () => BoardState, set: (p: Partial<BoardState>) => void) {
   const s = get();
   if (!s.candles.length) return;
+  const symbol = getSymbol(s.symbolId);
   const indicators = computeIndicators(s.candles);
   const atr = lastNumber(indicators.atr) ?? s.candles[s.candles.length - 1].close * 0.01;
-  const signals = detectPatterns(s.candles, s.lines, atr, true);
+  const signals = detectPatterns(s.candles, s.lines, atr, symbol, true);
   const selected = signals.find((x) => x.id === s.selectedId) ?? signals[0] ?? null;
-  const filters = selected ? runFilters(selected, s.candles, s.lines, indicators, s.htf) : null;
-  const risk = s.riskPct;
-  const plan = selected ? buildPlan(selected, s.candles, s.lines, atr, s.account, risk) : null;
+  const filters = selected
+    ? runFilters(selected, s.candles, s.lines, indicators, s.htf, s.market, symbol)
+    : null;
+  const plan = selected
+    ? buildPlan(selected, s.candles, s.lines, atr, s.account, s.riskPct)
+    : null;
+
+  const last = s.candles[s.candles.length - 1];
+  const prev = s.candles[s.candles.length - 2];
+  let limitUp: number | null = null;
+  let limitDown: number | null = null;
+  if (prev && symbol.group !== "index") {
+    const lp = limitPrices(prev.close, symbol.limitPct);
+    limitUp = lp.up;
+    limitDown = lp.down;
+  }
+
   set({
     indicators,
     atr,
@@ -89,11 +112,15 @@ function recompute(get: () => BoardState, set: (p: Partial<BoardState>) => void)
     selectedId: selected?.id ?? null,
     filters,
     plan,
+    limitPct: symbol.limitPct,
+    limitUp,
+    limitDown,
   });
+  void last;
 }
 
 export const useBoardStore = create<BoardState>((set, get) => ({
-  symbolId: SYMBOLS[0].id,
+  symbolId: DEFAULT_SYMBOL_ID,
   timeframe: "1d",
   candles: [],
   source: "",
@@ -103,17 +130,21 @@ export const useBoardStore = create<BoardState>((set, get) => ({
   indicators: null,
   atr: 0,
   htf: DEFAULT_HTF,
+  market: null,
+  limitPct: 0.1,
+  limitUp: null,
+  limitDown: null,
   signals: [],
   selectedId: null,
   lines: [],
   trends: [],
   fib: null,
-  showMa: { ma20: true, ma50: true, ma200: false },
+  showMa: { ma5: true, ma10: true, ma20: true, ma60: false },
   drawMode: "none",
   trendDraft: null,
   filters: null,
   plan: null,
-  account: 100000,
+  account: 500000,
   riskPct: 1,
   forceRr: false,
   checklistOpen: false,
@@ -130,7 +161,7 @@ export const useBoardStore = create<BoardState>((set, get) => ({
     const { symbolId, timeframe } = get();
     set({ loading: true, error: null });
     try {
-      const res = await fetch(`/api/candles?symbol=${symbolId}&tf=${timeframe}`);
+      const res = await fetch(`/api/candles?symbol=${encodeURIComponent(symbolId)}&tf=${timeframe}`);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
       set({
@@ -138,9 +169,14 @@ export const useBoardStore = create<BoardState>((set, get) => ({
         source: data.source,
         mock: data.mock,
         htf: data.htf ?? DEFAULT_HTF,
+        market: data.market ?? null,
         loading: false,
       });
-      recompute(get, set);
+      try {
+        recompute(get, set);
+      } catch (err) {
+        set({ error: err instanceof Error ? err.message : "形态计算失败" });
+      }
     } catch (e) {
       set({ loading: false, error: e instanceof Error ? e.message : "加载失败" });
     }
@@ -158,21 +194,23 @@ export const useBoardStore = create<BoardState>((set, get) => ({
     const last = get().candles[get().candles.length - 1];
     const inferred: StructureLine["kind"] =
       kind ?? (last && price >= last.close ? "resistance" : "support");
-    const line: StructureLine = {
-      id: `L-${Date.now()}`,
-      kind: inferred,
-      price,
-      tests: 1,
-      springAnchor: false,
-      upthrustAnchor: false,
-    };
-    set({ lines: [...get().lines, line] });
+    set({
+      lines: [
+        ...get().lines,
+        {
+          id: `L-${Date.now()}`,
+          kind: inferred,
+          price,
+          tests: 1,
+          springAnchor: false,
+          upthrustAnchor: false,
+        },
+      ],
+    });
     recompute(get, set);
   },
   bumpTests: (id) => {
-    set({
-      lines: get().lines.map((l) => (l.id === id ? { ...l, tests: l.tests + 1 } : l)),
-    });
+    set({ lines: get().lines.map((l) => (l.id === id ? { ...l, tests: l.tests + 1 } : l)) });
   },
   toggleAnchor: (id, kind) => {
     set({
@@ -207,9 +245,7 @@ export const useBoardStore = create<BoardState>((set, get) => ({
     });
   },
   toggleTrendDash: (id) =>
-    set({
-      trends: get().trends.map((t) => (t.id === id ? { ...t, dashed: !t.dashed } : t)),
-    }),
+    set({ trends: get().trends.map((t) => (t.id === id ? { ...t, dashed: !t.dashed } : t)) }),
   autoFib: () => {
     const range = lastSwingRange(get().candles);
     if (!range) return;
@@ -238,6 +274,7 @@ export const useBoardStore = create<BoardState>((set, get) => ({
   generatePlan: () => {
     const s = get();
     if (!s.plan) return;
+    if (s.plan.direction === "bear") return;
     if (s.plan.blocked && !s.forceRr) return;
     set({ checklistOpen: true, checklist: {} });
   },
@@ -245,6 +282,7 @@ export const useBoardStore = create<BoardState>((set, get) => ({
     if (v) {
       const s = get();
       if (s.plan?.blocked && !s.forceRr) return;
+      if (s.plan?.direction === "bear") return;
     }
     set({ checklistOpen: v, checklist: v ? {} : get().checklist });
   },
@@ -259,4 +297,10 @@ export function trendArrow(htf: HtfTrend): string {
   if (htf.direction === "up") return "↑";
   if (htf.direction === "down") return "↓";
   return "→";
+}
+
+export function lampColor(dir: HtfTrend["direction"]): string {
+  if (dir === "up") return "bg-[#f0616d]"; // A股习惯红涨
+  if (dir === "down") return "bg-[#3dd68c]";
+  return "bg-[#e6c35c]";
 }

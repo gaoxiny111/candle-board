@@ -1,4 +1,4 @@
-export type Timeframe = "1h" | "4h" | "1d" | "1w";
+export type Timeframe = "1h" | "1d" | "1w";
 
 export type Candle = {
   time: number;
@@ -9,6 +9,7 @@ export type Candle = {
   volume: number;
 };
 
+/** bull=看多参考；bear=减仓/不买入参考（A股无普遍做空） */
 export type Direction = "bull" | "bear";
 export type Grade = "S" | "A" | "B";
 export type TrendDir = "up" | "down" | "side";
@@ -104,9 +105,15 @@ export type TradePlan = {
   tp3Note: string;
   riskPct: number;
   account: number;
+  /** 股数（整百股） */
   positionSize: number;
   rr: number;
   blocked: boolean;
+  /** T+1：建议入场日（信号次交易日） */
+  entryDate: string;
+  /** 最早可卖出日 */
+  earliestSellDate: string;
+  confirmHint: string;
 };
 
 export type HtfTrend = {
@@ -116,16 +123,23 @@ export type HtfTrend = {
   slope: number | null;
 };
 
+export type MarketBoard = {
+  shanghai: HtfTrend;
+  shenzhen: HtfTrend;
+  chinext: HtfTrend;
+};
+
 export type IndicatorSnapshot = {
   rsi: (number | null)[];
   macd: { macd: (number | null)[]; signal: (number | null)[]; hist: (number | null)[] };
-  stoch: { k: (number | null)[]; d: (number | null)[] };
+  kdj: { k: (number | null)[]; d: (number | null)[]; j: (number | null)[] };
   atr: (number | null)[];
+  ma5: (number | null)[];
+  ma10: (number | null)[];
   ma20: (number | null)[];
-  ma50: (number | null)[];
-  ma200: (number | null)[];
+  ma60: (number | null)[];
+  volMa5: (number | null)[];
   volMa20: (number | null)[];
-  volMa50: (number | null)[];
 };
 
 export type DrawMode = "none" | "hline" | "trend" | "fib";

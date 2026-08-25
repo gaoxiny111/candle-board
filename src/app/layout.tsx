@@ -2,8 +2,8 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "candle-board · 蜡烛图交易看板",
-  description: "辅助工具，非投资建议。形态初筛 + 六层过滤 + 人工终审。",
+  title: "candle-board · A股蜡烛图辅助看板",
+  description: "技术分析学习辅助，非投资建议。A股形态初筛 + 六层过滤 + T+1 人工终审。",
 };
 
 export default function RootLayout({

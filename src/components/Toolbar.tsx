@@ -1,7 +1,7 @@
 "use client";
 
-import { SYMBOLS, TIMEFRAMES } from "@/lib/symbols";
-import { trendArrow, useBoardStore } from "@/store/useBoardStore";
+import { TIMEFRAMES, symbolsByGroup } from "@/lib/symbols";
+import { lampColor, trendArrow, useBoardStore } from "@/store/useBoardStore";
 
 export default function Toolbar() {
   const symbolId = useBoardStore((s) => s.symbolId);
@@ -10,11 +10,14 @@ export default function Toolbar() {
   const setTimeframe = useBoardStore((s) => s.setTimeframe);
   const atr = useBoardStore((s) => s.atr);
   const htf = useBoardStore((s) => s.htf);
+  const market = useBoardStore((s) => s.market);
   const drawMode = useBoardStore((s) => s.drawMode);
   const setDrawMode = useBoardStore((s) => s.setDrawMode);
   const autoFib = useBoardStore((s) => s.autoFib);
   const showMa = useBoardStore((s) => s.showMa);
   const setShowMa = useBoardStore((s) => s.setShowMa);
+  const account = useBoardStore((s) => s.account);
+  const groups = symbolsByGroup();
 
   return (
     <div className="flex flex-wrap items-center gap-2 border-b border-[#242a36] bg-[#11141c] px-3 py-2 text-sm">
@@ -23,10 +26,14 @@ export default function Toolbar() {
         value={symbolId}
         onChange={(e) => setSymbol(e.target.value)}
       >
-        {SYMBOLS.map((s) => (
-          <option key={s.id} value={s.id}>
-            {s.name}
-          </option>
+        {groups.map((g) => (
+          <optgroup key={g.group} label={g.label}>
+            {g.items.map((s) => (
+              <option key={s.id} value={s.id}>
+                {s.name}
+              </option>
+            ))}
+          </optgroup>
         ))}
       </select>
 
@@ -43,20 +50,24 @@ export default function Toolbar() {
       </div>
 
       <div className="rounded border border-[#242a36] px-2 py-1 font-mono text-xs">
-        ATR(14) {atr ? atr.toFixed(4) : "—"}
+        ATR(14) {Number.isFinite(atr) && atr > 0 ? atr.toFixed(4) : "—"}
       </div>
 
       <div className="rounded border border-[#242a36] px-2 py-1 text-xs">
-        {htf ? (
-          <>
-            {htf.label}趋势 {trendArrow(htf)}{" "}
-            <span className="text-[#8b93a7]">
-              {htf.direction === "up" ? "升" : htf.direction === "down" ? "降" : "平"}
-            </span>
-          </>
-        ) : (
-          <span className="text-[#8b93a7]">大周期趋势 —</span>
-        )}
+        {htf.label}
+        {trendArrow(htf)}
+      </div>
+
+      {market && (
+        <div className="flex items-center gap-2 rounded border border-[#242a36] px-2 py-1 text-[11px]">
+          <MarketLamp label="上证" t={market.shanghai} />
+          <MarketLamp label="深证" t={market.shenzhen} />
+          <MarketLamp label="创业" t={market.chinext} />
+        </div>
+      )}
+
+      <div className="rounded border border-[#242a36] px-2 py-1 text-[11px] text-[#8b93a7]">
+        账户 ¥{account.toLocaleString("zh-CN")}
       </div>
 
       <div className="mx-1 h-4 w-px bg-[#242a36]" />
@@ -71,17 +82,29 @@ export default function Toolbar() {
         斐波那契
       </ToolBtn>
 
-      {(["ma20", "ma50", "ma200"] as const).map((k) => (
+      {(["ma5", "ma10", "ma20", "ma60"] as const).map((k) => (
         <label key={k} className="flex items-center gap-1 text-xs text-[#8b93a7]">
-          <input
-            type="checkbox"
-            checked={showMa[k]}
-            onChange={(e) => setShowMa(k, e.target.checked)}
-          />
+          <input type="checkbox" checked={showMa[k]} onChange={(e) => setShowMa(k, e.target.checked)} />
           {k.toUpperCase()}
         </label>
       ))}
     </div>
+  );
+}
+
+function MarketLamp({
+  label,
+  t,
+}: {
+  label: string;
+  t: { direction: "up" | "down" | "side" };
+}) {
+  return (
+    <span className="inline-flex items-center gap-1">
+      <span className={`h-2 w-2 rounded-full ${lampColor(t.direction)}`} />
+      {label}
+      {t.direction === "up" ? "↑" : t.direction === "down" ? "↓" : "→"}
+    </span>
   );
 }
 

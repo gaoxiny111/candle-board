@@ -30,6 +30,7 @@ export default function SignalList() {
           >
             <span className={`rounded border px-1 font-semibold ${gradeCls[s.grade]}`}>{s.grade}</span>
             <span>{s.label}</span>
+            {s.direction === "bear" && <span className="text-[10px] text-[#8b93a7]">减仓参考</span>}
             <span className="ml-auto text-[#8b93a7]">{s.quality.toFixed(1)}</span>
           </button>
         ))}

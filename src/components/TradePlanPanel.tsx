@@ -17,17 +17,18 @@ export default function TradePlanPanel() {
     return (
       <section className="p-3">
         <h2 className="text-sm font-medium">交易计划</h2>
-        <p className="mt-1 text-xs text-[#8b93a7]">选中信号后生成入场 / 止损 / 止盈 / 仓位。</p>
+        <p className="mt-1 text-xs text-[#8b93a7]">选中看多信号后生成入场 / 止损 / 止盈 / 仓位（T+1）。</p>
       </section>
     );
   }
 
-  const canGenerate = !plan.blocked || forceRr;
-  const layersOk = filter.passed >= 4;
+  const isBear = plan.direction === "bear";
+  const canGenerate = !isBear && (!plan.blocked || forceRr);
+  const layersOk = filter.passed >= 5;
 
   return (
     <section className="p-3">
-      <h2 className="mb-2 text-sm font-medium">交易计划生成器</h2>
+      <h2 className="mb-2 text-sm font-medium">交易计划生成器（A股 T+1）</h2>
       <div className="grid grid-cols-2 gap-2 text-xs">
         <label className="text-[#8b93a7]">
           账户资金
@@ -50,32 +51,36 @@ export default function TradePlanPanel() {
         </label>
       </div>
       <ul className="mt-2 space-y-1 font-mono text-xs">
-        <li>方向 {plan.direction === "bull" ? "多" : "空"}</li>
-        <li>入场 {plan.entry.toFixed(4)}</li>
-        <li>止损 {plan.stop.toFixed(4)}（极值 ± 1×ATR，可在清单中手改）</li>
-        <li>TP1 {plan.tp1.toFixed(4)}</li>
-        <li>TP2 {plan.tp2.toFixed(4)}</li>
-        <li>TP3 {plan.tp3Note}</li>
-        <li>仓位 {plan.positionSize.toFixed(4)} 单位</li>
+        <li>方向 {isBear ? "减仓/不买入参考" : "看多参考"}</li>
+        <li>建议入场日 {plan.entryDate}</li>
+        <li>入场参考 {plan.entry.toFixed(2)}</li>
+        <li>止损 {plan.stop.toFixed(2)}（极值 ± 1×ATR）</li>
+        <li>TP1 {plan.tp1.toFixed(2)}</li>
+        <li>TP2 {plan.tp2.toFixed(2)}</li>
+        <li>买入股数 {plan.positionSize}（整百股）</li>
         <li className={plan.rr < 1.5 ? "text-[#f0616d]" : "text-[#3dd68c]"}>
           盈亏比 {plan.rr.toFixed(2)} : 1
         </li>
+        <li className="text-[#c9a227]">最早卖出日 {plan.earliestSellDate}（T+1）</li>
+        <li className="whitespace-normal text-[#8b93a7]">确认：{plan.confirmHint}</li>
       </ul>
-      {plan.blocked && (
+      {isBear && (
+        <p className="mt-2 text-[11px] text-[#e6c35c]">
+          检测到看跌形态：A股无普遍做空，不生成买入计划，仅作减仓/观望参考。
+        </p>
+      )}
+      {plan.blocked && !isBear && (
         <label className="mt-2 flex items-center gap-2 text-[11px] text-[#f0616d]">
           <input type="checkbox" checked={forceRr} onChange={(e) => setForceRr(e.target.checked)} />
-          盈亏比 &lt; 1.5，强制确认后才能生成
+          盈亏比 &lt; 1.5 或股数不足 100，强制确认后才能生成
         </label>
       )}
       {!layersOk && (
-        <p className="mt-2 text-[11px] text-[#e6c35c]">过滤器通过不足，建议不要生成计划。</p>
+        <p className="mt-2 text-[11px] text-[#e6c35c]">过滤器通过不足 5/6，建议不要生成计划。</p>
       )}
       <button
         disabled={!canGenerate}
-        onClick={() => {
-          if (plan.blocked && !forceRr) return;
-          useBoardStore.getState().generatePlan();
-        }}
+        onClick={() => useBoardStore.getState().generatePlan()}
         className="mt-3 w-full rounded bg-[#c9a227] py-2 text-sm font-medium text-black disabled:cursor-not-allowed disabled:bg-[#2a3140] disabled:text-[#8b93a7]"
       >
         生成计划并打开检查清单

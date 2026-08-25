@@ -2,112 +2,132 @@ import type { Candle, Timeframe } from "./types";
 import { htfOf } from "./symbols";
 import type { SymbolDef } from "./symbols";
 
-const YAHOO_UA =
+const UA =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36";
 
-function yahooInterval(tf: Timeframe): { interval: string; range: string } {
+function sinaScale(tf: Timeframe): number | null {
   switch (tf) {
     case "1h":
-      return { interval: "1h", range: "6mo" };
-    case "4h":
-      return { interval: "1h", range: "1y" };
+      return 60;
     case "1d":
-      return { interval: "1d", range: "5y" };
+      return 240;
     case "1w":
-      return { interval: "1wk", range: "10y" };
+      return null;
   }
 }
 
-function binanceInterval(tf: Timeframe): string {
+function tencentPeriod(tf: Timeframe): string {
   switch (tf) {
     case "1h":
-      return "1h";
-    case "4h":
-      return "4h";
+      return "m60";
     case "1d":
-      return "1d";
+      return "day";
     case "1w":
-      return "1w";
+      return "week";
   }
 }
 
-function aggregate4h(candles: Candle[]): Candle[] {
-  const out: Candle[] = [];
-  const bucket = new Map<number, Candle[]>();
+function normalizeCandles(candles: Candle[]): Candle[] {
+  const byTime = new Map<number, Candle>();
   for (const c of candles) {
-    const t = Math.floor(c.time / 14400) * 14400;
-    const list = bucket.get(t) ?? [];
-    list.push(c);
-    bucket.set(t, list);
+    if (!Number.isFinite(c.time) || c.time <= 0) continue;
+    byTime.set(Math.floor(c.time), c);
   }
-  const times = [...bucket.keys()].sort((a, b) => a - b);
-  for (const t of times) {
-    const bars = bucket.get(t)!;
-    if (!bars.length) continue;
-    out.push({
-      time: t,
-      open: bars[0].open,
-      high: Math.max(...bars.map((b) => b.high)),
-      low: Math.min(...bars.map((b) => b.low)),
-      close: bars[bars.length - 1].close,
-      volume: bars.reduce((s, b) => s + b.volume, 0),
-    });
-  }
-  return out;
+  return [...byTime.values()].sort((a, b) => a.time - b.time);
 }
 
-async function fetchYahoo(ticker: string, tf: Timeframe): Promise<Candle[]> {
-  const { interval, range } = yahooInterval(tf);
-  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(
-    ticker,
-  )}?interval=${interval}&range=${range}`;
+function parseCnDate(s: string, tf: Timeframe): number {
+  const m = s.match(/^(\d{4})-(\d{2})-(\d{2})(?:\s+(\d{2}):(\d{2}))?/);
+  if (!m) return 0;
+  const y = Number(m[1]);
+  const mo = Number(m[2]) - 1;
+  const d = Number(m[3]);
+  if (tf === "1d" || tf === "1w") return Math.floor(Date.UTC(y, mo, d) / 1000);
+  const hh = Number(m[4] ?? "0");
+  const mm = Number(m[5] ?? "0");
+  return Math.floor(Date.UTC(y, mo, d, hh - 8, mm, 0) / 1000);
+}
+
+async function fetchSina(symbol: SymbolDef, tf: Timeframe): Promise<Candle[]> {
+  const scale = sinaScale(tf);
+  if (scale == null) throw new Error("sina no weekly");
+  const url =
+    `https://money.finance.sina.com.cn/quotes_service/api/json_v2.php/CN_MarketData.getKLineData` +
+    `?symbol=${symbol.sina}&scale=${scale}&ma=no&datalen=1023`;
   const res = await fetch(url, {
-    headers: { "User-Agent": YAHOO_UA, Accept: "application/json" },
-    next: { revalidate: 30 },
+    headers: { "User-Agent": UA, Referer: "https://finance.sina.com.cn/", Accept: "*/*" },
+    cache: "no-store",
+    signal: AbortSignal.timeout(12000),
   });
-  if (!res.ok) throw new Error(`Yahoo ${res.status}`);
-  const json = await res.json();
-  const result = json?.chart?.result?.[0];
-  if (!result) throw new Error("Yahoo empty");
-  const ts: number[] = result.timestamp ?? [];
-  const q = result.indicators?.quote?.[0] ?? {};
-  const candles: Candle[] = [];
-  for (let i = 0; i < ts.length; i++) {
-    const open = q.open?.[i];
-    const high = q.high?.[i];
-    const low = q.low?.[i];
-    const close = q.close?.[i];
-    const volume = q.volume?.[i];
-    if ([open, high, low, close].some((v) => v == null || Number.isNaN(v))) continue;
-    candles.push({
-      time: ts[i],
-      open,
-      high,
-      low,
-      close,
-      volume: volume ?? 0,
-    });
-  }
-  return tf === "4h" ? aggregate4h(candles) : candles;
+  if (!res.ok) throw new Error(`Sina ${res.status}`);
+  const rows = (await res.json()) as {
+    day: string;
+    open: string;
+    high: string;
+    low: string;
+    close: string;
+    volume: string;
+  }[];
+  if (!Array.isArray(rows) || rows.length < 30) throw new Error("Sina empty");
+  return rows.map((r) => ({
+    time: parseCnDate(r.day, tf),
+    open: Number(r.open),
+    high: Number(r.high),
+    low: Number(r.low),
+    close: Number(r.close),
+    volume: Number(r.volume),
+  }));
 }
 
-async function fetchBinance(ticker: string, tf: Timeframe): Promise<Candle[]> {
-  const interval = binanceInterval(tf);
-  const url = `https://api.binance.com/api/v3/klines?symbol=${ticker}&interval=${interval}&limit=1000`;
-  const res = await fetch(url, { next: { revalidate: 15 } });
-  if (!res.ok) throw new Error(`Binance ${res.status}`);
-  const rows = (await res.json()) as unknown[];
-  return rows.map((row) => {
-    const r = row as (string | number)[];
-    return {
-      time: Math.floor(Number(r[0]) / 1000),
-      open: Number(r[1]),
-      high: Number(r[2]),
-      low: Number(r[3]),
-      close: Number(r[4]),
-      volume: Number(r[5]),
-    };
+async function fetchTencent(symbol: SymbolDef, tf: Timeframe): Promise<Candle[]> {
+  const period = tencentPeriod(tf);
+  const count = tf === "1w" ? 520 : 640;
+  const url = `https://web.ifzq.gtimg.cn/appstock/app/fqkline/get?param=${symbol.sina},${period},,,${count},qfq`;
+  const res = await fetch(url, {
+    headers: { "User-Agent": UA, Referer: "https://gu.qq.com/", Accept: "*/*" },
+    cache: "no-store",
+    signal: AbortSignal.timeout(12000),
   });
+  if (!res.ok) throw new Error(`Tencent ${res.status}`);
+  const json = await res.json();
+  const block = json?.data?.[symbol.sina] ?? {};
+  const key =
+    Object.keys(block).find((k) => k.includes(period) || k.includes("day") || k.includes("week") || k.includes("m60")) ??
+    Object.keys(block).find((k) => Array.isArray(block[k]));
+  const rows: unknown[] = key ? block[key] : [];
+  if (!Array.isArray(rows) || rows.length < 30) throw new Error("Tencent empty");
+  const candles: Candle[] = [];
+  for (const row of rows) {
+    const r = row as (string | number | object)[];
+    if (!Array.isArray(r) || r.length < 5) continue;
+    const time = parseCnDate(String(r[0]), tf);
+    const open = Number(r[1]);
+    const close = Number(r[2]);
+    const high = Number(r[3]);
+    const low = Number(r[4]);
+    const volume = Number(r[5] ?? 0);
+    if (![time, open, high, low, close].every((v) => Number.isFinite(v))) continue;
+    candles.push({ time, open, high, low, close, volume: Number.isFinite(volume) ? volume : 0 });
+  }
+  if (candles.length < 30) throw new Error("Tencent too few");
+  return candles;
+}
+
+async function fetchCnStock(symbol: SymbolDef, tf: Timeframe): Promise<Candle[]> {
+  const errors: string[] = [];
+  if (tf !== "1w") {
+    try {
+      return await fetchSina(symbol, tf);
+    } catch (e) {
+      errors.push(e instanceof Error ? e.message : "sina");
+    }
+  }
+  try {
+    return await fetchTencent(symbol, tf);
+  } catch (e) {
+    errors.push(e instanceof Error ? e.message : "tencent");
+  }
+  throw new Error(`CN stock failed: ${errors.join("; ")}`);
 }
 
 export function mockCandles(seedPrice = 100, count = 400): Candle[] {
@@ -122,15 +142,8 @@ export function mockCandles(seedPrice = 100, count = 400): Candle[] {
     const close = Math.max(0.5, open * (1 + (drift + shock) * 0.008));
     const high = Math.max(open, close) * (1 + Math.abs(Math.sin(i)) * 0.012);
     const low = Math.min(open, close) * (1 - Math.abs(Math.cos(i * 1.3)) * 0.012);
-    const volume = 800 + Math.abs(Math.sin(i / 3)) * 2200 + (i % 23 === 0 ? 4000 : 0);
-    candles.push({
-      time: now - i * step,
-      open,
-      high,
-      low,
-      close,
-      volume,
-    });
+    const volume = 800000 + Math.abs(Math.sin(i / 3)) * 2200000;
+    candles.push({ time: now - i * step, open, high, low, close, volume });
     price = close;
   }
   return candles;
@@ -141,14 +154,12 @@ export async function loadCandles(
   tf: Timeframe,
 ): Promise<{ candles: Candle[]; source: string; mock: boolean }> {
   try {
-    const candles =
-      symbol.source === "binance"
-        ? await fetchBinance(symbol.ticker, tf)
-        : await fetchYahoo(symbol.ticker, tf);
+    const candles = await fetchCnStock(symbol, tf);
     if (candles.length < 50) throw new Error("too few bars");
-    return { candles, source: symbol.source, mock: false };
+    return { candles: normalizeCandles(candles), source: "sina/tencent", mock: false };
   } catch {
-    return { candles: mockCandles(symbol.source === "binance" ? 60000 : 100), source: "mock", mock: true };
+    const seed = symbol.group === "index" ? 3200 : symbol.group === "etf" ? 4.2 : 180;
+    return { candles: normalizeCandles(mockCandles(seed)), source: "mock", mock: true };
   }
 }
 
